@@ -1,0 +1,87 @@
+//ML Flask code
+pip install flask flask_cors pandas scikit-learn sqlite3 data.table
+
+//app.py
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import pandas as pd
+import sqlite3
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
+
+app = Flask(__name__)
+CORS(app)  # Allow cross-origin requests
+
+# Load dataset
+df = pd.read_csv("D:/R_Dataset/fraudTest.csv", usecols=["amt", "city_pop", "lat", "long", "is_fraud"])
+
+# Connect to SQLite database
+conn = sqlite3.connect('users.db', check_same_thread=False)
+cursor = conn.cursor()
+
+# Create users table if not exists
+cursor.execute('''CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    password TEXT NOT NULL)''')
+conn.commit()
+
+
+# User authentication
+@app.route("/register", methods=["POST"])
+def register():
+    data = request.json
+    username, password = data.get("username"), data.get("password")
+
+    try:
+        cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
+        conn.commit()
+        return jsonify({"message": "Registration successful!"}), 201
+    except:
+        return jsonify({"message": "Username already exists!"}), 400
+
+
+@app.route("/login", methods=["POST"])
+def login():
+    data = request.json
+    username, password = data.get("username"), data.get("password")
+
+    cursor.execute("SELECT * FROM users WHERE username = ? AND password = ?", (username, password))
+    user = cursor.fetchone()
+    if user:
+        return jsonify({"message": "Login successful!"})
+    return jsonify({"message": "Invalid credentials!"}), 401
+
+
+# Get dataset for frontend
+@app.route("/data", methods=["GET"])
+def get_data():
+    return df.to_json(orient="records")
+
+
+# Train ML Model
+@app.route("/train", methods=["POST"])
+def train_model():
+    data = request.json
+    target_var = data.get("targetVar")
+    predictors = data.get("predictors")
+
+    if target_var not in df.columns or any(p not in df.columns for p in predictors):
+        return jsonify({"message": "Invalid columns selected!"}), 400
+
+    X = df[predictors]
+    y = df[target_var]
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    model = LogisticRegression()
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+
+    report = classification_report(y_test, y_pred, output_dict=True)
+    return jsonify(report)
+
+
+if __name__ == "__main__":
+    app.run(debug=True)
